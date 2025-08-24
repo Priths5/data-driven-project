@@ -9,7 +9,7 @@ from datetime import datetime
 import os
 import traceback
 from werkzeug.utils import secure_filename
-
+import gunicorn
 # Import your existing script
 try:
     from DDMMpeakClaude import (
@@ -574,4 +574,6 @@ if __name__ == '__main__':
     print("Make sure DDMMpeakClaude.py is in the same directory")
     print("Place your .pth model files in the 'models' folder")
     print("Navigate to http://localhost:5000 in your browser")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    import os
+    port=int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
