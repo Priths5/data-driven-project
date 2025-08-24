@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <div class="card">
+            <div class="card-header">
+                <h4><i class="fas fa-search"></i> Predict Material Properties</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-4">
+                        <label for="formula" class="form-label">Chemical Formula</label>
+                        <input type="text" class="form-control form-control-lg" id="formula" name="formula" 
+                               placeholder="e.g., AcCuO3, BaTiO3" required>
+                        <div class="form-text">Enter the chemical formula of the material</div>
+                    </div>
+                    
+                    <h5 class="mb-3">Material Features</h5>
+                    <div class="feature-grid">
+                        {% for col in feature_cols %}
+                        <div class="mb-3">
+                            <label for="{{ col }}" class="form-label">{{ col.replace('_', ' ').title() }}</label>
+                            <input type="number" class="form-control" id="{{ col }}" name="{{ col }}" 
+                                   step="any" placeholder="0.0">
+                        </div>
+                        {% endfor %}
+                    </div>
+                    
+                    <div class="text-center mt-4">
+                        <button type="submit" class="btn btn-gradient btn-lg">
+                            <i class="fas fa-calculator"></i> Make Prediction
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
