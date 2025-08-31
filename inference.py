@@ -9,16 +9,17 @@ from datetime import datetime
 import os
 import traceback
 from werkzeug.utils import secure_filename
-import gunicorn
-# Import your existing script
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from torch_geometric.loader import DataLoader
+
+# Import your existing modules
 try:
-    from DDMMpeakClaude import (
-        MaterialsGraphDataset, GCN, GraphSAGE, 
-        evaluate_model, predict_properties,
-        device
-    )
-except ImportError:
-    print("Make sure DDMMpeakClaude.py is in the same directory")
+    from GraphBuild import build_graph, process_csv, plot_graph_with_features
+    from model import MaterialsGNN, evaluate_model, predict_material_properties, load_trained_model
+except ImportError as e:
+    print(f"Import error: {e}")
+    print("Make sure GraphBuild.py and model.py are in the same directory")
     exit(1)
 
 app = Flask(__name__)
@@ -28,10 +29,11 @@ app.config['MODEL_FOLDER'] = 'models'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Global variables to store models and data
-models = {'gcn': None, 'sage': None}
+models = {'gcn': None, 'gnn': None}
 dataset = None
 model_info = None
 models_loaded = False
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Ensure directories exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -44,8 +46,50 @@ def allowed_file(filename):
     ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
     return ext in csv_extensions or ext in model_extensions
 
-def load_pretrained_models(gcn_path=None, sage_path=None, dataset_obj=None):
-    """Load pre-trained model files with intelligent architecture detection"""
+class MaterialsDataset:
+    """Simple dataset wrapper to handle CSV data and graph creation"""
+    def __init__(self, csv_path=None, target_cols=['energy_above_hull (eV/atom)', 'band_gap (eV)']):
+        self.csv_path = csv_path
+        self.target_cols = target_cols
+        self.df = None
+        self.graphs = None
+        
+        if csv_path and os.path.exists(csv_path):
+            self.df = pd.read_csv(csv_path)
+            print(f"Loaded dataset with {len(self.df)} samples")
+        else:
+            print("No CSV file provided or file not found")
+    
+    def create_graphs(self):
+        """Create graph objects from CSV data"""
+        if self.df is None:
+            return []
+        
+        if self.graphs is None:
+            self.graphs = []
+            for idx, row in self.df.iterrows():
+                try:
+                    graph = build_graph(row)
+                    self.graphs.append(graph)
+                except Exception as e:
+                    print(f"Error processing row {idx}: {e}")
+                    continue
+        
+        return self.graphs
+    
+    @property
+    def feature_cols(self):
+        """Get feature column names (excluding targets)"""
+        if self.df is None:
+            return []
+        
+        # Return columns that are likely to be material features
+        exclude_cols = self.target_cols + ['formula', 'composition', 'sites', 'space_group', 'direct_bandgap']
+        feature_cols = [col for col in self.df.columns if col not in exclude_cols]
+        return feature_cols
+
+def load_pretrained_models(model_paths, dataset_obj=None):
+    """Load pre-trained model files"""
     global models, model_info, models_loaded
     
     if dataset_obj is None:
@@ -53,58 +97,54 @@ def load_pretrained_models(gcn_path=None, sage_path=None, dataset_obj=None):
         return False
     
     try:
-        # Get input dimensions from dataset
+        # Get sample graph to determine input dimensions
         sample_graphs = dataset_obj.create_graphs()
         if not sample_graphs:
             flash('No graphs could be created from dataset!', 'error')
             return False
             
-        input_dim = sample_graphs[0].x.shape[1]
+        sample_graph = sample_graphs[0]
+        node_input_dim = sample_graph.x.shape[1]
+        edge_input_dim = sample_graph.edge_attr.shape[1] if sample_graph.edge_attr is not None else 4
+        global_input_dim = sample_graph.u.shape[1] if sample_graph.u is not None else 10
         
         model_info = {
-            'input_dim': input_dim,
+            'node_input_dim': node_input_dim,
+            'edge_input_dim': edge_input_dim,
+            'global_input_dim': global_input_dim,
             'loaded_models': [],
-            'model_architectures': {},
             'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        # Load GCN model
-        if gcn_path and os.path.exists(gcn_path):
-            try:
-                # Try to infer architecture from saved model
-                checkpoint = torch.load(gcn_path, map_location=device)
-                gcn_model, gcn_arch = load_model_with_architecture_detection(
-                    checkpoint, 'GCN', input_dim
-                )
-                if gcn_model:
-                    models['gcn'] = gcn_model
-                    model_info['loaded_models'].append('GCN')
-                    model_info['model_architectures']['GCN'] = gcn_arch
-                    print(f"GCN model loaded from {gcn_path} with architecture: {gcn_arch}")
-                else:
-                    flash(f'Failed to load GCN model from {gcn_path}', 'error')
-            except Exception as e:
-                flash(f'Failed to load GCN model: {str(e)}', 'error')
-                print(f"GCN loading error: {e}")
-        
-        # Load GraphSAGE model
-        if sage_path and os.path.exists(sage_path):
-            try:
-                # Try to infer architecture from saved model
-                checkpoint = torch.load(sage_path, map_location=device)
-                sage_model, sage_arch = load_model_with_architecture_detection(
-                    checkpoint, 'GraphSAGE', input_dim
-                )
-                if sage_model:
-                    models['sage'] = sage_model
-                    model_info['loaded_models'].append('GraphSAGE')
-                    model_info['model_architectures']['GraphSAGE'] = sage_arch
-                    print(f"GraphSAGE model loaded from {sage_path} with architecture: {sage_arch}")
-                else:
-                    flash(f'Failed to load GraphSAGE model from {sage_path}', 'error')
-            except Exception as e:
-                flash(f'Failed to load GraphSAGE model: {str(e)}', 'error')
-                print(f"GraphSAGE loading error: {e}")
+        # Load models
+        for model_name, model_path in model_paths.items():
+            if model_path and os.path.exists(model_path):
+                try:
+                    # Create model with detected architecture
+                    model = MaterialsGNN(
+                        node_input_dim=node_input_dim,
+                        edge_input_dim=edge_input_dim,
+                        global_input_dim=global_input_dim,
+                        hidden_dim=128,
+                        num_conv_layers=4,
+                        dropout=0.3
+                    )
+                    
+                    # Load state dict
+                    checkpoint = torch.load(model_path, map_location=device)
+                    if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+                        model.load_state_dict(checkpoint['state_dict'])
+                    else:
+                        model.load_state_dict(checkpoint)
+                    
+                    model.eval()
+                    models[model_name] = model
+                    model_info['loaded_models'].append(model_name.upper())
+                    print(f"{model_name.upper()} model loaded from {model_path}")
+                    
+                except Exception as e:
+                    flash(f'Failed to load {model_name.upper()} model: {str(e)}', 'error')
+                    print(f"{model_name.upper()} loading error: {e}")
         
         if model_info['loaded_models']:
             models_loaded = True
@@ -118,82 +158,6 @@ def load_pretrained_models(gcn_path=None, sage_path=None, dataset_obj=None):
         flash(f'Error loading models: {str(e)}', 'error')
         print(f"Model loading error: {traceback.format_exc()}")
         return False
-
-def load_model_with_architecture_detection(checkpoint, model_type, input_dim):
-    """Load model with automatic architecture detection"""
-    try:
-        # Try to infer architecture from the checkpoint
-        state_dict = checkpoint if isinstance(checkpoint, dict) and 'convs.0.lin_l.weight' in checkpoint else checkpoint.get('model_state_dict', checkpoint)
-        
-        # Detect input dimension from first layer
-        if 'convs.0.lin_l.weight' in state_dict:
-            detected_input_dim = state_dict['convs.0.lin_l.weight'].shape[1]
-        elif 'convs.0.weight' in state_dict:
-            detected_input_dim = state_dict['convs.0.weight'].shape[1]
-        else:
-            detected_input_dim = input_dim
-        
-        # Detect hidden dimension
-        if 'convs.0.lin_l.weight' in state_dict:
-            hidden_dim = state_dict['convs.0.lin_l.weight'].shape[0]
-        elif 'convs.0.weight' in state_dict:
-            hidden_dim = state_dict['convs.0.weight'].shape[0]
-        else:
-            hidden_dim = 128  # default
-        
-        # Detect number of layers by counting conv layers
-        conv_layers = [k for k in state_dict.keys() if k.startswith('convs.') and ('weight' in k)]
-        num_layers = len(set([k.split('.')[1] for k in conv_layers])) if conv_layers else 3
-        
-        # Detect output dimension from classifier
-        output_dim = 1  # default for regression
-        if 'classifier.3.weight' in state_dict:
-            output_dim = state_dict['classifier.3.weight'].shape[0]
-        elif 'classifier.2.weight' in state_dict:
-            output_dim = state_dict['classifier.2.weight'].shape[0]
-        elif 'head.2.weight' in state_dict:  # Different naming convention
-            output_dim = state_dict['head.2.weight'].shape[0]
-        
-        # Handle different naming conventions
-        if 'head.0.weight' in state_dict and 'classifier.0.weight' not in state_dict:
-            # Convert head.* to classifier.* naming
-            new_state_dict = {}
-            for k, v in state_dict.items():
-                if k.startswith('head.'):
-                    new_key = k.replace('head.', 'classifier.')
-                    new_state_dict[new_key] = v
-                else:
-                    new_state_dict[k] = v
-            state_dict = new_state_dict
-        
-        dropout = 0.2  # default
-        
-        arch_info = {
-            'input_dim': detected_input_dim,
-            'hidden_dim': hidden_dim,
-            'output_dim': output_dim,
-            'num_layers': num_layers,
-            'dropout': dropout
-        }
-        
-        # Create model with detected architecture
-        if model_type == 'GCN':
-            model = GCN(detected_input_dim, hidden_dim, output_dim, num_layers, dropout).to(device)
-        else:  # GraphSAGE
-            model = GraphSAGE(detected_input_dim, hidden_dim, output_dim, num_layers, dropout).to(device)
-        
-        # Try to load the state dict
-        try:
-            model.load_state_dict(state_dict, strict=False)  # Use strict=False to handle minor mismatches
-            model.eval()
-            return model, arch_info
-        except Exception as e:
-            print(f"Error loading state dict: {e}")
-            return None, None
-            
-    except Exception as e:
-        print(f"Architecture detection failed: {e}")
-        return None, None
 
 @app.route('/')
 def index():
@@ -230,13 +194,11 @@ def load_models():
     try:
         # Get form data
         csv_file = request.files.get('csv_file')
-        gcn_file = request.files.get('gcn_file')
-        sage_file = request.files.get('sage_file')
-        target_column = request.form.get('target_column', 'band_gap')
+        gnn_file = request.files.get('gnn_file')
+        target_column = request.form.get('target_column', 'band_gap (eV)')
         
         # Use existing model files or uploaded ones
-        gcn_model_name = request.form.get('existing_gcn_model')
-        sage_model_name = request.form.get('existing_sage_model')
+        gnn_model_name = request.form.get('existing_gnn_model')
         
         # Handle CSV file
         csv_path = None
@@ -247,34 +209,26 @@ def load_models():
         
         # Initialize dataset
         if csv_path:
-            dataset = MaterialsGraphDataset(csv_path=csv_path, target_col=target_column)
+            dataset = MaterialsDataset(csv_path=csv_path)
         else:
-            # Use default dataset
-            dataset = MaterialsGraphDataset(target_col=target_column)
-            flash('Using default sample dataset', 'info')
+            # Create example dataset
+            flash('No CSV provided. Please upload a CSV file with materials data.', 'warning')
+            return redirect(url_for('load_models'))
         
         # Handle model files
-        gcn_path = None
-        sage_path = None
+        model_paths = {}
         
-        # GCN model
-        if gcn_file and allowed_file(gcn_file.filename):
-            filename = secure_filename(gcn_file.filename)
-            gcn_path = os.path.join(app.config['MODEL_FOLDER'], filename)
-            gcn_file.save(gcn_path)
-        elif gcn_model_name:
-            gcn_path = os.path.join(app.config['MODEL_FOLDER'], gcn_model_name)
-        
-        # GraphSAGE model
-        if sage_file and allowed_file(sage_file.filename):
-            filename = secure_filename(sage_file.filename)
-            sage_path = os.path.join(app.config['MODEL_FOLDER'], filename)
-            sage_file.save(sage_path)
-        elif sage_model_name:
-            sage_path = os.path.join(app.config['MODEL_FOLDER'], sage_model_name)
+        # GNN model
+        if gnn_file and allowed_file(gnn_file.filename):
+            filename = secure_filename(gnn_file.filename)
+            gnn_path = os.path.join(app.config['MODEL_FOLDER'], filename)
+            gnn_file.save(gnn_path)
+            model_paths['gnn'] = gnn_path
+        elif gnn_model_name:
+            model_paths['gnn'] = os.path.join(app.config['MODEL_FOLDER'], gnn_model_name)
         
         # Load the models
-        if load_pretrained_models(gcn_path, sage_path, dataset):
+        if load_pretrained_models(model_paths, dataset):
             return redirect(url_for('index'))
         else:
             return redirect(url_for('load_models'))
@@ -300,34 +254,50 @@ def predict():
     
     try:
         # Get input data from form
-        formula = request.form.get('formula', '')
+        composition = request.form.get('composition', 'Ca1 Ti1 O3')
         
-        # Get material features
-        material_features = []
-        for col in dataset.feature_cols:
-            value = request.form.get(col, 0)
-            try:
-                material_features.append(float(value))
-            except ValueError:
-                material_features.append(0.0)
+        # Create a row-like object for prediction
+        # You'll need to get all the required features from the form
+        row_data = {
+            'composition': composition,
+            'a_edge (angstrom)': float(request.form.get('a_edge', 3.85)),
+            'b_edge (angstrom)': float(request.form.get('b_edge', 3.85)),
+            'c_edge (angstrom)': float(request.form.get('c_edge', 3.85)),
+            'alpha_ang (deg)': float(request.form.get('alpha_ang', 90.0)),
+            'beta_ang (deg)': float(request.form.get('beta_ang', 90.0)),
+            'gamma_ang (deg)': float(request.form.get('gamma_ang', 90.0)),
+            'crystal_system': request.form.get('crystal_system', 'cubic'),
+            'total_magnetisation (bohr)': float(request.form.get('magnetisation', 0.0)),
+            'density (g/cc)': float(request.form.get('density', 5.0)),
+            'volume (cubic-angstrom)': float(request.form.get('volume', 60.0)),
+            'energy_above_hull (eV/atom)': 0.0,  # dummy values for graph construction
+            'band_gap (eV)': 0.0,
+            'space_group': 'Pm-3m',
+            'sites': 5,
+            'formula': composition.replace(' ', ''),
+            'direct_bandgap': True,
+            'energy_per_atom (eV/atom)': -8.0,
+            'formation_energy (eV/atom)': -3.0
+        }
+        
+        # Create graph from input data
+        row = pd.Series(row_data)
+        graph = build_graph(row)
         
         # Make predictions
         predictions = {}
-        if models['gcn'] is not None:
-            gcn_pred = predict_properties(models['gcn'], formula, material_features, dataset)
-            predictions['GCN'] = float(gcn_pred[0])
-        
-        if models['sage'] is not None:
-            sage_pred = predict_properties(models['sage'], formula, material_features, dataset)
-            predictions['GraphSAGE'] = float(sage_pred[0])
+        if models['gnn'] is not None:
+            pred_result = predict_material_properties(models['gnn'], graph)
+            predictions['GNN'] = pred_result
         
         # Create visualization
-        pred_chart = create_prediction_chart(predictions)
+        pred_values = {k: v['energy_above_hull'] for k, v in predictions.items()}
+        pred_chart = create_prediction_chart(pred_values)
         
         result = {
-            'formula': formula,
+            'composition': composition,
             'predictions': predictions,
-            'material_features': dict(zip(dataset.feature_cols, material_features)),
+            'input_data': row_data,
             'chart_json': pred_chart
         }
         
@@ -360,30 +330,39 @@ def evaluate():
             test_graphs = graphs
         else:
             # Normal split for larger datasets
-            from sklearn.model_selection import train_test_split
             _, test_graphs = train_test_split(graphs, test_size=0.2, random_state=42)
         
-        from torch_geometric.loader import DataLoader
         test_loader = DataLoader(test_graphs, batch_size=min(32, len(test_graphs)), shuffle=False)
         
         # Evaluate models
         evaluation_results = {}
         
-        if models['gcn'] is not None:
+        if models['gnn'] is not None:
             try:
-                gcn_results = evaluate_model(models['gcn'], test_loader)
-                evaluation_results['GCN'] = gcn_results
+                preds, targets = evaluate_model(models['gnn'], test_loader)
+                
+                # Calculate metrics for both targets
+                energy_mae = mean_absolute_error(targets[:, 0], preds[:, 0])
+                energy_mse = mean_squared_error(targets[:, 0], preds[:, 0])
+                energy_r2 = r2_score(targets[:, 0], preds[:, 0])
+                
+                bandgap_mae = mean_absolute_error(targets[:, 1], preds[:, 1])
+                bandgap_mse = mean_squared_error(targets[:, 1], preds[:, 1])
+                bandgap_r2 = r2_score(targets[:, 1], preds[:, 1])
+                
+                evaluation_results['GNN'] = {
+                    'energy_mae': energy_mae,
+                    'energy_mse': energy_mse,
+                    'energy_r2': energy_r2,
+                    'bandgap_mae': bandgap_mae,
+                    'bandgap_mse': bandgap_mse,
+                    'bandgap_r2': bandgap_r2,
+                    'predictions': preds.tolist(),
+                    'targets': targets.tolist()
+                }
             except Exception as e:
-                flash(f'GCN evaluation failed: {str(e)}', 'error')
-                print(f"GCN evaluation error: {e}")
-        
-        if models['sage'] is not None:
-            try:
-                sage_results = evaluate_model(models['sage'], test_loader)
-                evaluation_results['GraphSAGE'] = sage_results
-            except Exception as e:
-                flash(f'GraphSAGE evaluation failed: {str(e)}', 'error')
-                print(f"GraphSAGE evaluation error: {e}")
+                flash(f'GNN evaluation failed: {str(e)}', 'error')
+                print(f"GNN evaluation error: {e}")
         
         # Create charts if we have results
         charts = {}
@@ -405,36 +384,6 @@ def evaluate():
         print(f"Evaluation error: {traceback.format_exc()}")
         return redirect(url_for('evaluate'))
 
-# Add this route for debugging model architectures
-@app.route('/debug_model/<path:model_path>')
-def debug_model(model_path):
-    """Debug model architecture"""
-    try:
-        full_path = os.path.join(app.config['MODEL_FOLDER'], model_path)
-        if os.path.exists(full_path):
-            checkpoint = torch.load(full_path, map_location='cpu')
-            
-            # Get state dict
-            state_dict = checkpoint if isinstance(checkpoint, dict) and any(k.startswith('convs.') for k in checkpoint.keys()) else checkpoint.get('model_state_dict', checkpoint)
-            
-            info = {
-                'file': model_path,
-                'keys': list(state_dict.keys()),
-                'layer_info': {}
-            }
-            
-            # Analyze layers
-            for key in state_dict.keys():
-                if 'weight' in key:
-                    shape = state_dict[key].shape
-                    info['layer_info'][key] = {'shape': list(shape)}
-            
-            return jsonify(info)
-        else:
-            return jsonify({'error': 'Model file not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/models/status')
 def api_model_status():
     """API endpoint for model status"""
@@ -453,20 +402,42 @@ def api_predict():
     
     try:
         data = request.get_json()
-        formula = data.get('formula', '')
-        material_features = data.get('material_features', [])
+        composition = data.get('composition', 'Ca1 Ti1 O3')
+        material_features = data.get('material_features', {})
+        
+        # Create prediction graph
+        row_data = {
+            'composition': composition,
+            'a_edge (angstrom)': material_features.get('a_edge', 3.85),
+            'b_edge (angstrom)': material_features.get('b_edge', 3.85),
+            'c_edge (angstrom)': material_features.get('c_edge', 3.85),
+            'alpha_ang (deg)': material_features.get('alpha_ang', 90.0),
+            'beta_ang (deg)': material_features.get('beta_ang', 90.0),
+            'gamma_ang (deg)': material_features.get('gamma_ang', 90.0),
+            'crystal_system': material_features.get('crystal_system', 'cubic'),
+            'total_magnetisation (bohr)': material_features.get('magnetisation', 0.0),
+            'density (g/cc)': material_features.get('density', 5.0),
+            'volume (cubic-angstrom)': material_features.get('volume', 60.0),
+            'energy_above_hull (eV/atom)': 0.0,
+            'band_gap (eV)': 0.0,
+            'space_group': 'Pm-3m',
+            'sites': 5,
+            'formula': composition.replace(' ', ''),
+            'direct_bandgap': True,
+            'energy_per_atom (eV/atom)': -8.0,
+            'formation_energy (eV/atom)': -3.0
+        }
+        
+        row = pd.Series(row_data)
+        graph = build_graph(row)
         
         predictions = {}
-        if models['gcn'] is not None:
-            gcn_pred = predict_properties(models['gcn'], formula, material_features, dataset)
-            predictions['GCN'] = float(gcn_pred[0])
-        
-        if models['sage'] is not None:
-            sage_pred = predict_properties(models['sage'], formula, material_features, dataset)
-            predictions['GraphSAGE'] = float(sage_pred[0])
+        if models['gnn'] is not None:
+            pred_result = predict_material_properties(models['gnn'], graph)
+            predictions['GNN'] = pred_result
         
         return jsonify({
-            'formula': formula,
+            'composition': composition,
             'predictions': predictions
         })
         
@@ -479,30 +450,34 @@ def create_performance_comparison_chart(evaluation_results):
         return None
     
     models_list = []
-    mse_values = []
-    mae_values = []
-    r2_values = []
+    energy_mae_values = []
+    bandgap_mae_values = []
+    energy_r2_values = []
+    bandgap_r2_values = []
     
     for model_name, results in evaluation_results.items():
         models_list.append(model_name)
-        mse_values.append(results['mse'])
-        mae_values.append(results['mae'])
-        r2_values.append(results['r2'])
+        energy_mae_values.append(results['energy_mae'])
+        bandgap_mae_values.append(results['bandgap_mae'])
+        energy_r2_values.append(results['energy_r2'])
+        bandgap_r2_values.append(results['bandgap_r2'])
     
-    trace_mse = go.Bar(x=models_list, y=mse_values, name='MSE', yaxis='y')
-    trace_mae = go.Bar(x=models_list, y=mae_values, name='MAE', yaxis='y')
-    trace_r2 = go.Scatter(x=models_list, y=r2_values, mode='markers+lines', 
-                         name='R²', yaxis='y2', marker=dict(size=10, color='green'))
+    trace_energy_mae = go.Bar(x=models_list, y=energy_mae_values, name='Energy MAE', yaxis='y')
+    trace_bandgap_mae = go.Bar(x=models_list, y=bandgap_mae_values, name='Band Gap MAE', yaxis='y')
+    trace_energy_r2 = go.Scatter(x=models_list, y=energy_r2_values, mode='markers+lines', 
+                                name='Energy R²', yaxis='y2', marker=dict(size=10, color='green'))
+    trace_bandgap_r2 = go.Scatter(x=models_list, y=bandgap_r2_values, mode='markers+lines', 
+                                 name='Band Gap R²', yaxis='y2', marker=dict(size=10, color='orange'))
     
     layout = go.Layout(
         title='Model Performance Comparison',
         xaxis=dict(title='Models'),
-        yaxis=dict(title='MSE / MAE', side='left'),
+        yaxis=dict(title='MAE', side='left'),
         yaxis2=dict(title='R² Score', side='right', overlaying='y'),
         hovermode='closest'
     )
     
-    fig = go.Figure(data=[trace_mse, trace_mae, trace_r2], layout=layout)
+    fig = go.Figure(data=[trace_energy_mae, trace_bandgap_mae, trace_energy_r2, trace_bandgap_r2], layout=layout)
     return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
 def create_predictions_scatter_chart(evaluation_results):
@@ -511,32 +486,53 @@ def create_predictions_scatter_chart(evaluation_results):
         return None
     
     traces = []
-    colors = {'GCN': 'blue', 'GraphSAGE': 'red'}
+    colors = {'GNN': 'blue'}
     
     for model_name, results in evaluation_results.items():
+        targets = np.array(results['targets'])
+        predictions = np.array(results['predictions'])
+        
+        # Energy above hull
         traces.append(go.Scatter(
-            x=results['targets'],
-            y=results['predictions'],
+            x=targets[:, 0],
+            y=predictions[:, 0],
             mode='markers',
-            name=f'{model_name} Predictions',
+            name=f'{model_name} Energy Above Hull',
             marker=dict(color=colors.get(model_name, 'black'), opacity=0.6)
         ))
-    
-    # Perfect prediction line
-    if evaluation_results:
-        all_targets = []
-        for results in evaluation_results.values():
-            all_targets.extend(results['targets'])
         
-        if all_targets:
-            min_val, max_val = min(all_targets), max(all_targets)
-            traces.append(go.Scatter(
-                x=[min_val, max_val],
-                y=[min_val, max_val],
-                mode='lines',
-                name='Perfect Prediction',
-                line=dict(color='black', dash='dash')
-            ))
+        # Band gap
+        traces.append(go.Scatter(
+            x=targets[:, 1],
+            y=predictions[:, 1],
+            mode='markers',
+            name=f'{model_name} Band Gap',
+            marker=dict(color=colors.get(model_name, 'black'), opacity=0.6, symbol='square')
+        ))
+    
+    # Perfect prediction lines
+    if evaluation_results:
+        all_targets = np.vstack([np.array(results['targets']) for results in evaluation_results.values()])
+        
+        # Energy line
+        min_val, max_val = all_targets[:, 0].min(), all_targets[:, 0].max()
+        traces.append(go.Scatter(
+            x=[min_val, max_val],
+            y=[min_val, max_val],
+            mode='lines',
+            name='Perfect Energy Prediction',
+            line=dict(color='black', dash='dash')
+        ))
+        
+        # Band gap line
+        min_val, max_val = all_targets[:, 1].min(), all_targets[:, 1].max()
+        traces.append(go.Scatter(
+            x=[min_val, max_val],
+            y=[min_val, max_val],
+            mode='lines',
+            name='Perfect Band Gap Prediction',
+            line=dict(color='gray', dash='dash')
+        ))
     
     layout = go.Layout(
         title='Predictions vs Actual Values',
@@ -556,13 +552,13 @@ def create_prediction_chart(predictions):
     trace = go.Bar(
         x=models_list,
         y=values,
-        marker=dict(color=['blue', 'red'][:len(models_list)])
+        marker=dict(color=['blue'][:len(models_list)])
     )
     
     layout = go.Layout(
         title='Model Predictions',
         xaxis=dict(title='Models'),
-        yaxis=dict(title='Predicted Value'),
+        yaxis=dict(title='Predicted Energy Above Hull (eV/atom)'),
         hovermode='closest'
     )
     
@@ -571,9 +567,8 @@ def create_prediction_chart(predictions):
 
 if __name__ == '__main__':
     print("Starting Materials GNN Dashboard...")
-    print("Make sure DDMMpeakClaude.py is in the same directory")
+    print("Make sure GraphBuild.py and model.py are in the same directory")
     print("Place your .pth model files in the 'models' folder")
     print("Navigate to http://localhost:5000 in your browser")
     import os
-    port=int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
