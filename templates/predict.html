@@ -1,40 +1,141 @@
 {% extends "base.html" %}
 
+{% block title %}Make Predictions - Materials GNN{% endblock %}
+
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-lg-10">
-        <div class="card">
-            <div class="card-header">
-                <h4><i class="fas fa-search"></i> Predict Material Properties</h4>
-            </div>
-            <div class="card-body">
-                <form method="POST">
-                    <div class="mb-4">
-                        <label for="formula" class="form-label">Chemical Formula</label>
-                        <input type="text" class="form-control form-control-lg" id="formula" name="formula" 
-                               placeholder="e.g., AcCuO3, BaTiO3" required>
-                        <div class="form-text">Enter the chemical formula of the material</div>
+<div class="main-content">
+    <h1>Make Predictions</h1>
+    
+    <form method="POST">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Material Composition</h5>
                     </div>
-                    
-                    <h5 class="mb-3">Material Features</h5>
-                    <div class="feature-grid">
-                        {% for col in feature_cols %}
+                    <div class="card-body">
                         <div class="mb-3">
-                            <label for="{{ col }}" class="form-label">{{ col.replace('_', ' ').title() }}</label>
-                            <input type="number" class="form-control" id="{{ col }}" name="{{ col }}" 
-                                   step="any" placeholder="0.0">
+                            <label for="composition" class="form-label">Composition</label>
+                            <input type="text" class="form-control" id="composition" name="composition" 
+                                   value="Ca1 Ti1 O3" placeholder="e.g., Ca1 Ti1 O3">
+                            <div class="form-text">Enter the material composition (e.g., Ca1 Ti1 O3)</div>
                         </div>
-                        {% endfor %}
                     </div>
-                    
-                    <div class="text-center mt-4">
-                        <button type="submit" class="btn btn-gradient btn-lg">
-                            <i class="fas fa-calculator"></i> Make Prediction
-                        </button>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Crystal Structure</h5>
                     </div>
-                </form>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="a_edge" class="form-label">a (Å)</label>
+                                    <input type="number" class="form-control" id="a_edge" name="a_edge" 
+                                           value="3.85" step="0.01">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="b_edge" class="form-label">b (Å)</label>
+                                    <input type="number" class="form-control" id="b_edge" name="b_edge" 
+                                           value="3.85" step="0.01">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="c_edge" class="form-label">c (Å)</label>
+                                    <input type="number" class="form-control" id="c_edge" name="c_edge" 
+                                           value="3.85" step="0.01">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="alpha_ang" class="form-label">α (°)</label>
+                                    <input type="number" class="form-control" id="alpha_ang" name="alpha_ang" 
+                                           value="90.0" step="0.1">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="beta_ang" class="form-label">β (°)</label>
+                                    <input type="number" class="form-control" id="beta_ang" name="beta_ang" 
+                                           value="90.0" step="0.1">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="gamma_ang" class="form-label">γ (°)</label>
+                                    <input type="number" class="form-control" id="gamma_ang" name="gamma_ang" 
+                                           value="90.0" step="0.1">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="crystal_system" class="form-label">Crystal System</label>
+                            <select class="form-select" id="crystal_system" name="crystal_system">
+                                <option value="cubic" selected>Cubic</option>
+                                <option value="tetragonal">Tetragonal</option>
+                                <option value="orthorhombic">Orthorhombic</option>
+                                <option value="monoclinic">Monoclinic</option>
+                                <option value="triclinic">Triclinic</option>
+                                <option value="hexagonal">Hexagonal</option>
+                                <option value="trigonal">Trigonal</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
-    </div>
+        
+        <div class="row mt-3">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Material Properties</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="density" class="form-label">Density (g/cc)</label>
+                                    <input type="number" class="form-control" id="density" name="density" 
+                                           value="5.0" step="0.01">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="volume" class="form-label">Volume (Ų)</label>
+                                    <input type="number" class="form-control" id="volume" name="volume" 
+                                           value="60.0" step="0.01">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="magnetisation" class="form-label">Magnetization (μB)</label>
+                                    <input type="number" class="form-control" id="magnetisation" name="magnetisation" 
+                                           value="0.0" step="0.01">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mt-3">
+            <div class="col-12">
+                <button type="submit" class="btn btn-success btn-lg">Make Prediction</button>
+                <a href="{{ url_for('index') }}" class="btn btn-secondary btn-lg">Back to Dashboard</a>
+            </div>
+        </div>
+    </form>
 </div>
 {% endblock %}

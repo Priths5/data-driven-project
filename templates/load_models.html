@@ -1,210 +1,70 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Load Models - Materials GNN Dashboard</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-</head>
-<body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-        <div class="container">
-            <a class="navbar-brand" href="{{ url_for('index') }}">
-                <i class="fas fa-atom"></i> Materials GNN Dashboard
-            </a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="{{ url_for('index') }}">Dashboard</a>
-                <a class="nav-link active" href="{{ url_for('load_models') }}">Load Models</a>
-                <a class="nav-link" href="{{ url_for('predict') }}">Predict</a>
-<!--                 <a class="nav-link" href="{{ url_for('evaluate') }}">Evaluate</a> -->
-            </div>
-        </div>
-    </nav>
+{% extends "base.html" %}
 
-    <div class="container mt-4">
-        <!-- Flash Messages -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        <div class="row mb-3">
-            <div class="col-12">
-                {% for category, message in messages %}
-                <div class="alert alert-{{ 'danger' if category == 'error' else 'warning' if category == 'warning' else 'info' if category == 'info' else 'success' }} alert-dismissible fade show">
-                    {{ message }}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-        {% endwith %}
+{% block title %}Load Models - Materials GNN{% endblock %}
 
+{% block content %}
+<div class="main-content">
+    <h1>Load Models and Dataset</h1>
+    
+    <form method="POST" enctype="multipart/form-data">
         <div class="row">
-            <div class="col-12">
+            <div class="col-md-6">
                 <div class="card">
                     <div class="card-header">
-                        <h3><i class="fas fa-upload"></i> Load Pre-trained Models</h3>
+                        <h5>Dataset</h5>
                     </div>
                     <div class="card-body">
-                        <form method="POST" enctype="multipart/form-data">
-                            <!-- Dataset Section -->
-                            <div class="mb-4">
-                                <h5 class="border-bottom pb-2"><i class="fas fa-database"></i> Dataset</h5>
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="mb-3">
-                                            <label for="csv_file" class="form-label">Upload CSV Dataset (optional)</label>
-                                            <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv">
-                                            <div class="form-text">Leave empty to use default sample dataset</div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="mb-3">
-                                            <label for="target_column" class="form-label">Target Column</label>
-                                            <input type="text" class="form-control" id="target_column" name="target_column" value="band_gap" placeholder="band_gap">
-                                            <div class="form-text">Column name to predict (e.g., band_gap, formation_energy)</div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- GCN Model Section -->
-                            <div class="mb-4">
-                                <h5 class="border-bottom pb-2"><i class="fas fa-brain"></i> GCN Model</h5>
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="mb-3">
-                                            <label for="gcn_file" class="form-label">Upload GCN Model (.pth)</label>
-                                            <input type="file" class="form-control" id="gcn_file" name="gcn_file" accept=".pth,.pt">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="mb-3">
-                                            <label for="existing_gcn_model" class="form-label">Or Select Existing GCN Model</label>
-                                            <select class="form-select" id="existing_gcn_model" name="existing_gcn_model">
-                                                <option value="">-- Select Model --</option>
-                                                {% for model_file in model_files %}
-                                                {% if 'gcn' in model_file.lower() %}
-                                                <option value="{{ model_file }}">{{ model_file }}</option>
-                                                {% endif %}
-                                                {% endfor %}
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- GraphSAGE Model Section -->
-                            <div class="mb-4">
-                                <h5 class="border-bottom pb-2"><i class="fas fa-project-diagram"></i> GraphSAGE Model</h5>
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="mb-3">
-                                            <label for="sage_file" class="form-label">Upload GraphSAGE Model (.pth)</label>
-                                            <input type="file" class="form-control" id="sage_file" name="sage_file" accept=".pth,.pt">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="mb-3">
-                                            <label for="existing_sage_model" class="form-label">Or Select Existing GraphSAGE Model</label>
-                                            <select class="form-select" id="existing_sage_model" name="existing_sage_model">
-                                                <option value="">-- Select Model --</option>
-                                                {% for model_file in model_files %}
-                                                {% if 'sage' in model_file.lower() %}
-                                                <option value="{{ model_file }}">{{ model_file }}</option>
-                                                {% endif %}
-                                                {% endfor %}
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Available Model Files -->
-                            {% if model_files %}
-                            <div class="mb-4">
-                                <h6><i class="fas fa-list"></i> Available Model Files:</h6>
-                                <div class="row">
-                                    {% for model_file in model_files %}
-                                    <div class="col-md-4 mb-2">
-                                        <span class="badge bg-secondary">{{ model_file }}</span>
-                                    </div>
-                                    {% endfor %}
-                                </div>
-                            </div>
-                            {% else %}
-                            <div class="alert alert-info">
-                                <i class="fas fa-info-circle"></i>
-                                No model files found in the models folder. Please upload .pth files or place them in the models directory.
-                            </div>
-                            {% endif %}
-
-                            <div class="d-grid gap-2 d-md-flex justify-content-md-end">
-                                <button type="submit" class="btn btn-primary">
-                                    <i class="fas fa-download"></i> Load Models
-                                </button>
-                                <a href="{{ url_for('index') }}" class="btn btn-secondary">
-                                    <i class="fas fa-times"></i> Cancel
-                                </a>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Instructions -->
-        <div class="row mt-4">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h5><i class="fas fa-question-circle"></i> Instructions</h5>
-                    </div>
-                    <div class="card-body">
-                        <ol>
-                            <li><strong>Dataset:</strong> Upload a CSV file with materials data, or leave empty to use the sample dataset.</li>
-                            <li><strong>Target Column:</strong> Specify which column in your CSV contains the values you want to predict.</li>
-                            <li><strong>Models:</strong> Upload pre-trained .pth model files or select from existing files in the models folder.</li>
-                            <li><strong>Compatibility:</strong> Make sure your models were trained with the same feature dimensions as your dataset.</li>
-                        </ol>
-                        <div class="alert alert-warning mt-3">
-                            <i class="fas fa-exclamation-triangle"></i>
-                            <strong>Note:</strong> The model architecture (hidden dimensions, layers) must match what was used during training. 
-                            Default settings: 128 hidden dim, 3 layers, 0.2 dropout.
+                        <div class="mb-3">
+                            <label for="csv_file" class="form-label">Upload CSV Dataset</label>
+                            <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv">
+                            <div class="form-text">Upload your materials dataset in CSV format</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="target_column" class="form-label">Target Column</label>
+                            <select class="form-select" id="target_column" name="target_column">
+                                <option value="band_gap (eV)" selected>Band Gap (eV)</option>
+                                <option value="energy_above_hull (eV/atom)">Energy Above Hull (eV/atom)</option>
+                            </select>
                         </div>
                     </div>
                 </div>
             </div>
+            
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>GNN Model</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="gnn_file" class="form-label">Upload GNN Model</label>
+                            <input type="file" class="form-control" id="gnn_file" name="gnn_file" accept=".pth,.pt">
+                            <div class="form-text">Upload your trained .pth model file</div>
+                        </div>
+                        
+                        {% if model_files %}
+                        <div class="mb-3">
+                            <label for="existing_gnn_model" class="form-label">Or Select Existing Model</label>
+                            <select class="form-select" id="existing_gnn_model" name="existing_gnn_model">
+                                <option value="">Select a model...</option>
+                                {% for model_file in model_files %}
+                                <option value="{{ model_file }}">{{ model_file }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
         </div>
-    </div>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // Clear file input when selecting from dropdown
-        document.getElementById('existing_gcn_model').addEventListener('change', function() {
-            if (this.value) {
-                document.getElementById('gcn_file').value = '';
-            }
-        });
         
-        document.getElementById('existing_sage_model').addEventListener('change', function() {
-            if (this.value) {
-                document.getElementById('sage_file').value = '';
-            }
-        });
-        
-        // Clear dropdown when uploading file
-        document.getElementById('gcn_file').addEventListener('change', function() {
-            if (this.value) {
-                document.getElementById('existing_gcn_model').value = '';
-            }
-        });
-        
-        document.getElementById('sage_file').addEventListener('change', function() {
-            if (this.value) {
-                document.getElementById('existing_sage_model').value = '';
-            }
-        });
-    </script>
-</body>
-</html>
+        <div class="row mt-3">
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary btn-lg">Load Models and Dataset</button>
+                <a href="{{ url_for('index') }}" class="btn btn-secondary btn-lg">Cancel</a>
+            </div>
+        </div>
+    </form>
+</div>
+{% endblock %}

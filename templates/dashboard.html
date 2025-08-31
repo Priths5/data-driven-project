@@ -1,278 +1,52 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Materials GNN Dashboard</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.18.0/plotly.min.js"></script>
-</head>
-<body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-        <div class="container">
-            <a class="navbar-brand" href="{{ url_for('index') }}">
-                <i class="fas fa-atom"></i> Materials GNN Dashboard
-            </a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link active" href="{{ url_for('index') }}">Dashboard</a>
-                <a class="nav-link" href="{{ url_for('load_models') }}">Load Models</a>
-                <a class="nav-link" href="{{ url_for('predict') }}">Predict</a>
-<!--                 <a class="nav-link" href="{{ url_for('evaluate') }}">Evaluate</a> -->
-            </div>
-        </div>
-    </nav>
+{% extends "base.html" %}
 
-    <div class="container mt-4">
-        <!-- Flash Messages -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        <div class="row mb-3">
-            <div class="col-12">
-                {% for category, message in messages %}
-                <div class="alert alert-{{ 'danger' if category == 'error' else 'warning' if category == 'warning' else 'info' if category == 'info' else 'success' }} alert-dismissible fade show">
-                    {{ message }}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-        {% endwith %}
+{% block title %}Dashboard - Materials GNN{% endblock %}
 
-        <!-- Status Overview -->
-        <div class="row mb-4">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h3><i class="fas fa-tachometer-alt"></i> System Status</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="card text-center {% if models_loaded %}bg-success text-white{% else %}bg-warning{% endif %}">
-                                    <div class="card-body">
-                                        <i class="fas fa-brain fa-3x mb-3"></i>
-                                        <h5>Models</h5>
-                                        <h3>{{ sample_data.models_available }}/2</h3>
-                                        <p>{{ sample_data.status }}</p>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="card text-center {% if sample_data.dataset_loaded %}bg-info text-white{% else %}bg-secondary text-white{% endif %}">
-                                    <div class="card-body">
-                                        <i class="fas fa-database fa-3x mb-3"></i>
-                                        <h5>Dataset</h5>
-                                        <h3>{% if sample_data.dataset_loaded %}✓{% else %}✗{% endif %}</h3>
-                                        <p>{% if sample_data.dataset_loaded %}Loaded{% else %}Not Loaded{% endif %}</p>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="card text-center {% if models_loaded and sample_data.dataset_loaded %}bg-success text-white{% else %}bg-secondary text-white{% endif %}">
-                                    <div class="card-body">
-                                        <i class="fas fa-magic fa-3x mb-3"></i>
-                                        <h5>Predictions</h5>
-                                        <h3>{% if models_loaded and sample_data.dataset_loaded %}Ready{% else %}Not Ready{% endif %}</h3>
-                                        <p>Status</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+{% block content %}
+<div class="main-content">
+    <h1>Materials GNN Dashboard</h1>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card status-card">
+                <div class="card-body">
+                    <h5 class="card-title">System Status</h5>
+                    <p class="card-text">
+                        <strong>Status:</strong> {{ sample_data.status }}<br>
+                        <strong>Models Available:</strong> {{ sample_data.models_available }}<br>
+                        <strong>Dataset Loaded:</strong> {{ 'Yes' if sample_data.dataset_loaded else 'No' }}
+                    </p>
                 </div>
             </div>
         </div>
-
-        <!-- Model Information -->
-        {% if model_info %}
-        <div class="row mb-4">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h4><i class="fas fa-info-circle"></i> Loaded Models Information</h4>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-6">
-                                <h6>Model Architecture:</h6>
-                                <ul class="list-unstyled">
-                                    <li><strong>Input Dimension:</strong> {{ model_info.input_dim }}</li>
-                                    <li><strong>Hidden Dimension:</strong> {{ model_info.hidden_dim }}</li>
-                                    <li><strong>Number of Layers:</strong> {{ model_info.num_layers }}</li>
-                                    <li><strong>Dropout Rate:</strong> {{ model_info.dropout }}</li>
-                                </ul>
-                            </div>
-                            <div class="col-md-6">
-                                <h6>Loaded Models:</h6>
-                                {% for model in model_info.loaded_models %}
-                                <span class="badge bg-primary me-2">{{ model }}</span>
-                                {% endfor %}
-                                <br><br>
-                                <small class="text-muted">Loaded at: {{ model_info.timestamp }}</small>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        {% endif %}
-
-        <!-- Quick Actions -->
-        <div class="row mb-4">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h4><i class="fas fa-bolt"></i> Quick Actions</h4>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-4 mb-3">
-                                <div class="d-grid">
-                                    <a href="{{ url_for('load_models') }}" class="btn btn-primary btn-lg">
-                                        <i class="fas fa-upload"></i><br>
-                                        Load Models
-                                        <small class="d-block">Upload or select pre-trained models</small>
-                                    </a>
-                                </div>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <div class="d-grid">
-                                    {% if models_loaded %}
-                                    <a href="{{ url_for('predict') }}" class="btn btn-success btn-lg">
-                                        <i class="fas fa-magic"></i><br>
-                                        Make Predictions
-                                        <small class="d-block">Predict material properties</small>
-                                    </a>
-                                    {% else %}
-                                    <button class="btn btn-secondary btn-lg" disabled>
-                                        <i class="fas fa-magic"></i><br>
-                                        Make Predictions
-                                        <small class="d-block">Load models first</small>
-                                    </button>
-                                    {% endif %}
-                                </div>
-                            </div>
-<!--                             <div class="col-md-4 mb-3">
-                                <div class="d-grid">
-                                    {% if models_loaded %}
-                                    <a href="{{ url_for('evaluate') }}" class="btn btn-info btn-lg">
-                                        <i class="fas fa-chart-line"></i><br>
-                                        Evaluate Models
-                                        <small class="d-block">Test model performance</small>
-                                    </a>
-                                    {% else %}
-                                    <button class="btn btn-secondary btn-lg" disabled>
-                                        <i class="fas fa-chart-line"></i><br>
-                                        Evaluate Models
-                                        <small class="d-block">Load models first</small>
-                                    </button>
-                                    {% endif %}
-                                </div>
-                            </div> -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Getting Started -->
-        {% if not models_loaded %}
-        <div class="row">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h4><i class="fas fa-play-circle"></i> Getting Started</h4>
-                    </div>
-                    <div class="card-body">
-                        <div class="alert alert-info">
-                            <h5><i class="fas fa-info-circle"></i> Welcome to the Materials GNN Dashboard!</h5>
-                            <p>To get started, you need to load pre-trained models. Here's what you can do:</p>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-<!--                                 <h6>📁 Option 1: Upload Model Files</h6>
-                                <ul>
-                                    <li>Click "Load Models" above</li>
-                                    <li>Upload your pre-trained .pth files</li>
-                                    <li>Upload your dataset (CSV)</li>
-                                    <li>Start making predictions!</li>
-                                </ul>
-                            </div>
-                            <div class="col-md-6">
-                                <h6>💾 Option 2: Use Existing Models</h6>
-                                <ul>
-                                    <li>Place .pth files in the 'models' folder</li>
-                                    <li>Select from existing models</li>
-                                    <li>Load your dataset</li>
-                                    <li>Begin evaluation and prediction!</li>
-                                </ul> -->
-                            </div>
-                        </div>
-                        
-                        <hr>
-                        <h6>💡 Tips:</h6>
-                        <ul>
-                            <li>Model files should be named descriptively (e.g., gcn_materials_model.pth, sage_materials_model.pth)</li>
-                            <li>Your dataset should have the same features as used during training</li>
-                            <li>Make sure model architecture matches training parameters</li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-        </div>
-        {% endif %}
-
-        <!-- API Information -->
-        <div class="row mt-4">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h5><i class="fas fa-code"></i> API Endpoints</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-6">
-                                <h6>GET /api/models/status</h6>
-                                <p class="small text-muted">Check model loading status</p>
-                            </div>
-                            <div class="col-md-6">
-                                <h6>POST /api/predict</h6>
-                                <p class="small text-muted">Make predictions programmatically</p>
-                            </div>
-                        </div>
+        
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Quick Actions</h5>
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('load_models') }}" class="btn btn-primary">Load Models & Data</a>
+                        <a href="{{ url_for('predict') }}" class="btn btn-success" {% if not models_loaded %}disabled{% endif %}>Make Predictions</a>
+                        <a href="{{ url_for('evaluate') }}" class="btn btn-info" {% if not models_loaded %}disabled{% endif %}>Evaluate Models</a>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-
-    <footer class="bg-light mt-5 py-3">
-        <div class="container">
-            <div class="row">
-                <div class="col-12 text-center">
-                    <small class="text-muted">
-                        Materials GNN Dashboard | Powered by PyTorch Geometric & Flask
-                    </small>
-                </div>
+    
+    {% if model_info %}
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="model-info">
+                <h5>Model Information</h5>
+                <p><strong>Loaded Models:</strong> {{ ', '.join(model_info.loaded_models) if model_info.loaded_models else 'None' }}</p>
+                <p><strong>Node Input Dim:</strong> {{ model_info.get('node_input_dim', 'N/A') }}</p>
+                <p><strong>Edge Input Dim:</strong> {{ model_info.get('edge_input_dim', 'N/A') }}</p>
+                <p><strong>Global Input Dim:</strong> {{ model_info.get('global_input_dim', 'N/A') }}</p>
+                <p><strong>Loaded:</strong> {{ model_info.timestamp }}</p>
             </div>
         </div>
-    </footer>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
-    
-    <script>
-        // Auto-refresh status every 30 seconds
-        setInterval(function() {
-            fetch('/api/models/status')
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Status:', data);
-                })
-                .catch(error => console.error('Error:', error));
-        }, 30000);
-    </script>
-</body>
-</html>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
